@@ -79,7 +79,7 @@ func main() {
 	}).Methods("GET")
 
 	router.HandleFunc("/deny", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
+		w.WriteHeader(http.StatusUnauthorized)
 	}).Methods("GET")
 
 	// ? listen and serve on default 0.0.0.0:8080
