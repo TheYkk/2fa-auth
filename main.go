@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -100,7 +101,7 @@ func main() {
 		}
 
 		// ? Validate cookie
-		_,_,ok := cookie.Validate(cookieAuth,"sa",time.Duration(168)*time.Hour)
+		_,_,ok := cookie.Validate(cookieAuth,cookieSecret,time.Duration(168)*time.Hour)
 		if !ok {
 			log.Error("cookie signature not valid")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -141,20 +142,23 @@ func main() {
 
 		if authCode == authToken {
 			// ? Set cookie
-			cookieVal , err := cookie.SignedValue(secretAuth, "_auth_2fa", []byte("sea"), time.Now())
+			cookieVal , err := cookie.SignedValue(cookieSecret, "_auth_2fa", []byte("sea"), time.Now())
 			if err != nil {
 				log.Error("Can't sign cookie")
 				w.WriteHeader(http.StatusInternalServerError)
 			}
+			domains := strings.Split(*cookieDomain,",")
+			for _,domain := range domains {
+				http.SetCookie(w, &http.Cookie{
+					Name: "_auth_2fa",
+					Value: cookieVal,
+					HttpOnly: true,
+					Secure: true,
+					Expires: time.Now().Add(time.Duration(168)*time.Hour),
+					Domain: domain,
+				})
+			}
 
-			http.SetCookie(w, &http.Cookie{
-				Name: "_auth_2fa",
-				Value: cookieVal,
-				HttpOnly: true,
-				Secure: true,
-				Expires: time.Now().Add(time.Duration(168)*time.Hour),
-				Domain: *cookieDomain,
-			})
 
 			// ? Redirect to url
 			http.Redirect(w,r,redirectUrl,http.StatusFound)
