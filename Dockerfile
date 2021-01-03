@@ -1,4 +1,7 @@
 FROM golang:1.15-alpine AS builder
+RUN set -ex \
+    && apk add --no-cache  git
+
 WORKDIR /app
 
 COPY go.mod .

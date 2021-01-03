@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/base32"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
+	"github.com/theykk/2fa-auth/cookie"
+	"github.com/theykk/2fa-go"
+	"html/template"
 	"math"
 	"net/http"
 	"os"
@@ -23,6 +27,7 @@ var port = flag.String("port", getenv("PORT", strconv.Itoa(8080)), "Port to list
 var printVersion = flag.Bool("v", false, "Print version")
 var help = flag.Bool("help", false, "Get Help")
 var listen = flag.String("listen", getenv("LISTEN", "0.0.0.0"), "IPv4 address to listen on")
+var cookieDomain = flag.String("cookie-domain", "", "IPv4 address to listen on")
 
 func init() {
 
@@ -55,11 +60,16 @@ func init() {
 func main() {
 	log.Printf("Init 2FA-AUTH %s", Version)
 
-	//secret := getenv("2FA_SECRET", "")
-	//if secret == "" {
-	//	log.Fatal("2FA  secret not set")
-	//	return
-	//}
+	secretAuth := getenv("AUTH_2FA_SECRET", "")
+	if secretAuth == "" {
+		log.Fatal("2FA secret not set")
+		return
+	}
+	cookieSecret := getenv("AUTH_COOKIE_SECRET", "")
+	if cookieSecret == "" {
+		log.Fatal("Cookie Secret secret not set")
+		return
+	}
 
 
 
@@ -75,8 +85,82 @@ func main() {
 	}).Methods("GET")
 
 	router.HandleFunc("/auth", func(w http.ResponseWriter, r *http.Request) {
+		// ? Check auth cookie is exist , if not return Http Unauthorized response
+		cookieAuth, err := r.Cookie("_auth_2fa")
+		if err != nil  || cookieAuth == nil {
+			log.Error("Can't get cookie")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if len(cookieAuth.Value) <= 0 {
+			log.Error("Cookie is empty")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		// ? Validate cookie
+		_,_,ok := cookie.Validate(cookieAuth,"sa",time.Duration(168)*time.Hour)
+		if !ok {
+			log.Error("cookie signature not valid")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
 		w.WriteHeader(http.StatusOK)
+		return
 	}).Methods("GET")
+
+	// * https://2fa.theykk.com/start?rd=https://terminal.theykk.com/sea1
+	router.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
+		redirect := r.URL.Query().Get("rd")
+
+		parsedTemplate, _ := template.ParseFiles("2fa.html")
+		err := parsedTemplate.Execute(w, struct {
+			RedirectUrl string
+		}{
+			RedirectUrl: redirect,
+		})
+		if err != nil {
+			log.Println("Error executing template :", err)
+			return
+		}
+
+		// ? Response 2fa form html
+	}).Methods("GET")
+
+	router.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
+
+		r.ParseForm()
+		authCode := r.Form.Get("code")
+		redirectUrl := r.Form.Get("redirect")
+
+		// ? Get 2FA Auth code from secret
+		secretEncoded := base32.StdEncoding.EncodeToString([]byte(secretAuth))
+		authToken := go2fa.GetTOTPToken(secretEncoded)
+
+		if authCode == authToken {
+			// ? Set cookie
+			cookieVal , err := cookie.SignedValue(secretAuth, "_auth_2fa", []byte("sea"), time.Now())
+			if err != nil {
+				log.Error("Can't sign cookie")
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+
+			http.SetCookie(w, &http.Cookie{
+				Name: "_auth_2fa",
+				Value: cookieVal,
+				HttpOnly: true,
+				Secure: true,
+				Expires: time.Now().Add(time.Duration(168)*time.Hour),
+				Domain: *cookieDomain,
+			})
+
+			// ? Redirect to url
+			http.Redirect(w,r,redirectUrl,http.StatusFound)
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}).Methods("POST")
 
 	router.HandleFunc("/deny", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
