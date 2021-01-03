@@ -1,6 +1,6 @@
 FROM golang:1.15-alpine AS builder
 RUN set -ex \
-    && apk add --no-cache  git
+  && apk add --no-cache  git
 
 WORKDIR /app
 
@@ -19,4 +19,4 @@ WORKDIR /app
 
 COPY --from=builder /app/dist/2fa /app/2fa
 
-CMD ["./2fa"]
+ENTRYPOINT ["./2fa"]
