@@ -1,0 +1,174 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"github.com/gorilla/mux"
+	log "github.com/sirupsen/logrus"
+	"math"
+	"net/http"
+	"os"
+	"strconv"
+	"time"
+)
+
+// ? Version of build
+var (
+	Version = "dev"
+)
+
+var port = flag.String("port", getenv("PORT", strconv.Itoa(8080)), "Port to listen on for HTTP")
+var printVersion = flag.Bool("v", false, "Print version")
+var help = flag.Bool("help", false, "Get Help")
+var listen = flag.String("listen", getenv("LISTEN", "0.0.0.0"), "IPv4 address to listen on")
+
+func init() {
+
+	flag.Usage = func() {
+		flag.PrintDefaults()
+		os.Exit(0)
+	}
+
+	flag.Parse()
+
+	if *help {
+		flag.PrintDefaults()
+		os.Exit(0)
+	}
+
+	if *printVersion {
+		fmt.Print(Version)
+		os.Exit(0)
+	}
+
+	if Version == "dev" {
+		log.SetFormatter(&log.JSONFormatter{
+			PrettyPrint: true,
+		})
+	} else {
+		log.SetFormatter(&log.JSONFormatter{})
+	}
+	log.SetReportCaller(true)
+}
+func main() {
+	log.Printf("Init 2FA-AUTH %s", Version)
+
+	//secret := getenv("2FA_SECRET", "")
+	//if secret == "" {
+	//	log.Fatal("2FA  secret not set")
+	//	return
+	//}
+
+
+
+	// ? Create http server
+	router := mux.NewRouter()
+
+	router.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"version": Version})
+	}).Methods("GET")
+
+	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, "OK")
+	}).Methods("GET")
+
+	router.HandleFunc("/auth", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}).Methods("GET")
+
+	router.HandleFunc("/deny", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}).Methods("GET")
+
+	// ? listen and serve on default 0.0.0.0:8080
+	srv := &http.Server{
+		Handler: tracing()(logging()(router)),
+		Addr:    *listen + ":" + *port,
+		// ! Good practice: enforce timeouts for servers you create!
+		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  15 * time.Second,
+	}
+	log.Info("Serve at: ", *listen+":"+*port)
+
+	errServe := srv.ListenAndServe()
+	if errServe != nil {
+		log.Fatalf("Server err %s", errServe)
+	}
+}
+type key int
+
+const (
+	requestIDKey key = 0
+)
+
+// ? logging logs http request with http details such as  header , userAgent
+func logging() func(http.Handler) http.Handler {
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+			requestID, ok := r.Context().Value(requestIDKey).(string)
+			if !ok {
+				requestID = "unknown"
+			}
+
+			hostname, err := os.Hostname()
+			if err != nil {
+				hostname = "unknow"
+			}
+
+			start := time.Now()
+
+			// ? Execute next htpp middleware and calculate execution time
+			next.ServeHTTP(w, r)
+
+			stop := time.Since(start)
+			latency := int(math.Ceil(float64(stop.Nanoseconds()) / 1000000.0))
+
+			// ? Try to get user ip
+			IPAddress := r.Header.Get("X-Real-Ip")
+			if IPAddress == "" {
+				IPAddress = r.Header.Get("X-Forwarded-For")
+			}
+			if IPAddress == "" {
+				IPAddress = r.RemoteAddr
+			}
+
+			log.WithFields(log.Fields{
+				"hostname":  hostname,
+				"requestID": requestID,
+				"latency":   latency, // time to process
+				"clientIP":  IPAddress,
+				"method":    r.Method,
+				"path":      r.URL.Path,
+				"header":    r.Header,
+				"referer":   r.Referer(),
+				"userAgent": r.UserAgent(),
+			}).Info("Request")
+		})
+	}
+}
+
+// ? tracing trace http request with "X-Request-Id"
+func tracing() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestID := r.Header.Get("X-Request-Id")
+			if requestID == "" {
+				requestID = strconv.FormatInt(time.Now().UnixNano(), 10)
+			}
+			ctx := context.WithValue(r.Context(), requestIDKey, requestID)
+			w.Header().Set("X-Request-Id", requestID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+func getenv(key, fallback string) string {
+	value := os.Getenv(key)
+	if len(value) == 0 {
+		return fallback
+	}
+	return value
+}
