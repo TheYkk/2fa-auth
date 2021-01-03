@@ -22,5 +22,5 @@
 ### Go Patch ###
 /vendor/
 /Godeps/
-
+deploy-prod.yml
 # End of https://www.toptal.com/developers/gitignore/api/go

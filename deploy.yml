@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: auth-2fa
+  name: auth-2fa
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-2fa
+  template:
+    metadata:
+      labels:
+        app: auth-2fa
+    spec:
+      containers:
+        - name: auth-2fa
+          image: theykk/2fa-auth:v210103-ec5d04f
+          imagePullPolicy: Always
+          args:
+            - --cookie-domain=.theykk.com,.theykk.net
+          env:
+            - name: AUTH_2FA_SECRET
+              value: SECRET HERE
+            - name: AUTH_COOKIE_SECRET
+              value: SECRET HERE
+          resources:
+            limits:
+              cpu: 250m
+              memory: 512Mi
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+              name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: auth-2fa
+  name: auth-2fa
+  namespace: kube-system
+spec:
+  ports:
+    - name: http
+      protocol: TCP
+      targetPort: http
+      port: 80
+  selector:
+    app: auth-2fa
+---
+kind: Ingress
+apiVersion: networking.k8s.io/v1beta1
+metadata:
+  name: auth-2fa
+  namespace: kube-system
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    # nginx.ingress.kubernetes.io/limit-rpm: "4"
+
+spec:
+  tls:
+    - hosts:
+        - theykk.com
+      secretName: theykk-com-tls-prod
+  rules:
+    - host: 2fa.theykk.com
+      http:
+        paths:
+          - path: /
+            backend:
+              serviceName: auth-2fa
+              servicePort: http

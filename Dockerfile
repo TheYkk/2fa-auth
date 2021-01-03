@@ -18,5 +18,5 @@ EXPOSE 8080
 WORKDIR /app
 
 COPY --from=builder /app/dist/2fa /app/2fa
-
+COPY 2fa.html .
 ENTRYPOINT ["./2fa"]
